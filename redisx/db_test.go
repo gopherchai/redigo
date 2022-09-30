@@ -17,9 +17,12 @@ package redisx
 
 import (
 	"errors"
+	"fmt"
+	"testing"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
+	"github.com/stretchr/testify/assert"
 )
 
 type testConn struct {
@@ -68,4 +71,45 @@ func DialTest() (redis.Conn, error) {
 	}
 
 	return testConn{c}, nil
+}
+
+var (
+	c   redis.Conn
+	err error
+)
+
+func setup(t *testing.T) {
+	c, err = redis.Dial("tcp", "127.0.0.1:6379",
+		redis.DialReadTimeout(time.Second),
+		redis.DialWriteTimeout(time.Second),
+	)
+	if err != nil {
+		t.FailNow()
+	}
+}
+func TestZset(t *testing.T) {
+	setup(t)
+	c.Do("del", "zset1")
+	for i := 0; i < 100; i++ {
+		c.Do("zadd", "zset1", i, "m"+fmt.Sprintf("%d", i))
+	}
+	reply, err := c.Do("ZREVRANGE", "zset1", 0, 10, "WithSCORES")
+	values, err := redis.Values(reply, err)
+	assert.Nil(t, err)
+	m, _ := redis.Int64Map(values, nil) //转换出来的值没有按照zrevrange的顺序展示，但是这也是go的map本身的原因
+	for k, v := range m {
+		t.Errorf("%s,%+v is v", k, v)
+	}
+	ssm, _ := redis.ScoreSetMap(reply, nil)
+	for _, e := range ssm.GetSlice() {
+		t.Errorf("slice:%v,%v", e.Key, e.Val)
+	}
+	// for _, v := range values {
+	// 	vv, _ := redis.Int64Map(v, nil)
+	// 	for kk, val := range vv {
+	// 		t.Errorf("slice %s,%+v is v", kk, val)
+	// 	}
+	// 	t.Errorf("slice ,%+v is v", vv)
+	// }
+
 }

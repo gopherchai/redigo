@@ -412,6 +412,31 @@ func mapHelper(reply interface{}, err error, name string, makeMap func(int), ass
 	return nil
 }
 
+// scoreSetMapHelper builds a SortedSetMap from the data in reply of query on sorted set with scores.
+func scoreSetMapHelper(reply interface{}, err error, name string, assign func(key string, value interface{}) error) error {
+	values, err := Values(reply, err)
+	if err != nil {
+		return err
+	}
+
+	if len(values)%2 != 0 {
+		return fmt.Errorf("redigo: %s expects even number of values result, got %d", name, len(values))
+	}
+
+	for i := 0; i < len(values); i += 2 {
+		key, ok := values[i].([]byte)
+		if !ok {
+			return fmt.Errorf("redigo: %s key[%d] not a bulk string value, got %T", name, i, values[i])
+		}
+
+		if err := assign(string(key), values[i+1]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // StringMap is a helper that converts an array of strings (alternating key, value)
 // into a map[string]string. The HGETALL and CONFIG GET commands return replies in this format.
 // Requires an even number of values in result.
@@ -479,6 +504,45 @@ func Int64Map(result interface{}, err error) (map[string]int64, error) {
 	)
 
 	return m, err
+}
+
+//ScoreSetMap is a helper that converts an result of query(e.g. ZRANGE,ZREVRANGE) on sortedset with scores. its'elements is  in order the same as the raw query result.
+func ScoreSetMap(result interface{}, err error) (*SortedSetMap, error) {
+	var ssm = &SortedSetMap{
+		indexes: make(map[string]int),
+	}
+	err = scoreSetMapHelper(result, err, "scoresetMap", func(key string, v interface{}) error {
+		value, err := Float64(v, nil)
+		if err != nil {
+			return err
+		}
+		ssm.elements = append(ssm.elements, SortedSetElement{Key: key, Val: value})
+		ssm.indexes[key] = len(ssm.elements) - 1
+		return nil
+	})
+	return ssm, err
+}
+
+type SortedSetElement struct {
+	Key string
+	Val float64
+}
+
+type SortedSetMap struct {
+	indexes  map[string]int
+	elements []SortedSetElement
+}
+
+func (ssm *SortedSetMap) Get(key string) (float64, bool) {
+	i, ok := ssm.indexes[key]
+	if !ok {
+		return 0, false
+	}
+	return ssm.elements[i].Val, true
+}
+
+func (ssm *SortedSetMap) GetSlice() []SortedSetElement {
+	return ssm.elements
 }
 
 // Float64Map is a helper that converts an array of strings (alternating key, value)
